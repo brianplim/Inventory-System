@@ -13,12 +13,13 @@ class ProductManagementTest extends TestCase
     {
         $response = $this->get('/');
 
-        $response->assertRedirect(route('products.index'));
+        $response->assertOk();
+        $response->assertSee('StockTrack React Inventory');
     }
 
     public function test_product_can_be_created(): void
     {
-        $response = $this->post(route('products.store'), [
+        $response = $this->postJson('/api/products', [
             'sku' => 'PRD-100',
             'name' => 'Mechanical Keyboard',
             'category' => 'Peripherals',
@@ -28,7 +29,8 @@ class ProductManagementTest extends TestCase
             'description' => 'RGB keyboard for gaming and work.',
         ]);
 
-        $response->assertRedirect(route('products.index'));
+        $response->assertCreated();
+        $response->assertJsonPath('data.sku', 'PRD-100');
 
         $this->assertDatabaseHas('products', [
             'sku' => 'PRD-100',
@@ -58,10 +60,10 @@ class ProductManagementTest extends TestCase
             'date_added' => '2026-04-06',
         ]);
 
-        $response = $this->get(route('products.index', ['search' => 'Chair']));
+        $response = $this->getJson('/api/products?search=Chair');
 
         $response->assertOk();
-        $response->assertSee('Office Chair');
-        $response->assertDontSee('Desk Lamp');
+        $response->assertJsonCount(1, 'data');
+        $response->assertJsonPath('data.0.name', 'Office Chair');
     }
 }
