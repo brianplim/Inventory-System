@@ -1,21 +1,9 @@
-import './bootstrap';
-import '../css/app.css';
+import '../bootstrap';
+import '../../css/app.css';
 import React, { useEffect, useMemo, useState, useDeferredValue } from 'react';
 import { createRoot } from 'react-dom/client';
 
-const emptyForm = () => ({
-    sku: '',
-    name: '',
-    category: '',
-    price: '',
-    quantity: 0,
-    date_added: new Date().toISOString().slice(0, 10),
-    description: '',
-    image: null,
-    remove_image: false,
-});
-
-function App() {
+function ViewerApp() {
     const authUser = window.StockTrackAuth ?? null;
     const [products, setProducts] = useState([]);
     const [stats, setStats] = useState({
@@ -29,14 +17,8 @@ function App() {
     const [page, setPage] = useState(1);
     const [meta, setMeta] = useState({ current_page: 1, last_page: 1, total: 0 });
     const [loading, setLoading] = useState(true);
-    const [submitting, setSubmitting] = useState(false);
     const [message, setMessage] = useState(null);
     const [activeProduct, setActiveProduct] = useState(null);
-    const [isFormOpen, setIsFormOpen] = useState(false);
-    const [editingProduct, setEditingProduct] = useState(null);
-    const [form, setForm] = useState(emptyForm);
-    const [formErrors, setFormErrors] = useState({});
-    const [imagePreview, setImagePreview] = useState(null);
 
     useEffect(() => {
         const timeout = window.setTimeout(() => {
@@ -82,139 +64,20 @@ function App() {
             setProducts(response.data.data);
             setStats(response.data.stats);
             setMeta(response.data.meta);
+            setActiveProduct((current) => {
+                if (current) {
+                    return response.data.data.find((product) => product.id === current.id) ?? current;
+                }
+
+                return response.data.data[0] ?? null;
+            });
         } catch (error) {
             setMessage({
                 type: 'error',
-                text: extractErrorMessage(error, 'Unable to load inventory data.'),
+                text: extractErrorMessage(error, 'Unable to load products.'),
             });
         } finally {
             setLoading(false);
-        }
-    }
-
-    function openCreateForm() {
-        setEditingProduct(null);
-        setForm(emptyForm());
-        setFormErrors({});
-        setImagePreview(null);
-        setIsFormOpen(true);
-    }
-
-    function openEditForm(product) {
-        setEditingProduct(product);
-        setForm({
-            sku: product.sku ?? '',
-            name: product.name ?? '',
-            category: product.category ?? '',
-            price: product.price ?? '',
-            quantity: product.quantity ?? 0,
-            date_added: product.date_added ?? new Date().toISOString().slice(0, 10),
-            description: product.description ?? '',
-            image: null,
-            remove_image: false,
-        });
-        setFormErrors({});
-        setImagePreview(product.image_url);
-        setIsFormOpen(true);
-    }
-
-    function closeForm() {
-        setIsFormOpen(false);
-        setEditingProduct(null);
-        setFormErrors({});
-        setImagePreview(null);
-    }
-
-    function handleFieldChange(event) {
-        const { name, value, type, checked, files } = event.target;
-
-        if (type === 'file') {
-            const file = files?.[0] ?? null;
-            setForm((current) => ({ ...current, image: file }));
-            setImagePreview(file ? URL.createObjectURL(file) : editingProduct?.image_url ?? null);
-            return;
-        }
-
-        setForm((current) => ({
-            ...current,
-            [name]: type === 'checkbox' ? checked : value,
-        }));
-    }
-
-    async function handleSubmit(event) {
-        event.preventDefault();
-        setSubmitting(true);
-        setFormErrors({});
-
-        const payload = new FormData();
-        payload.append('sku', form.sku);
-        payload.append('name', form.name);
-        payload.append('category', form.category);
-        payload.append('price', form.price);
-        payload.append('quantity', form.quantity);
-        payload.append('date_added', form.date_added);
-        payload.append('description', form.description);
-        payload.append('remove_image', form.remove_image ? '1' : '0');
-
-        if (form.image) {
-            payload.append('image', form.image);
-        }
-
-        if (editingProduct) {
-            payload.append('_method', 'PUT');
-        }
-
-        try {
-            const response = await window.axios.post(
-                editingProduct ? `/api/products/${editingProduct.id}` : '/api/products',
-                payload,
-                {
-                    headers: {
-                        'Content-Type': 'multipart/form-data',
-                    },
-                },
-            );
-
-            setMessage({ type: 'success', text: response.data.message });
-            closeForm();
-            setActiveProduct(response.data.data ?? null);
-            await loadProducts(page, deferredSearch);
-        } catch (error) {
-            if (error.response?.status === 422) {
-                setFormErrors(error.response.data.errors ?? {});
-            } else {
-                setMessage({
-                    type: 'error',
-                    text: extractErrorMessage(error, 'Unable to save the product.'),
-                });
-            }
-        } finally {
-            setSubmitting(false);
-        }
-    }
-
-    async function handleDelete(product) {
-        if (!window.confirm(`Delete "${product.name}"?`)) {
-            return;
-        }
-
-        try {
-            const response = await window.axios.delete(`/api/products/${product.id}`);
-            setMessage({ type: 'success', text: response.data.message });
-
-            if (activeProduct?.id === product.id) {
-                setActiveProduct(null);
-            }
-
-            const shouldGoBack = products.length === 1 && page > 1;
-            const nextPage = shouldGoBack ? page - 1 : page;
-            setPage(nextPage);
-            await loadProducts(nextPage, deferredSearch);
-        } catch (error) {
-            setMessage({
-                type: 'error',
-                text: extractErrorMessage(error, 'Unable to delete the product.'),
-            });
         }
     }
 
@@ -243,15 +106,15 @@ function App() {
             <div className="app-backdrop" />
             <header className="topbar">
                 <div>
-                    <p className="eyebrow">React Frontend</p>
-                    <h1>StockTrack Inventory Hub</h1>
+                    <p className="eyebrow">Viewer Portal</p>
+                    <h1>StockTrack Product Showcase</h1>
                 </div>
                 <div className="topbar-actions">
                     <p className="topbar-copy">
-                        Laravel now powers the API while React runs the product dashboard.
+                        Read-only product browsing for staff or guests who should only view uploaded inventory.
                     </p>
                     <div className="session-chip">
-                        <span>{authUser?.name ?? 'Admin User'}</span>
+                        <span>{authUser?.name ?? 'Viewer User'}</span>
                         <small>{authUser?.email ?? 'Signed in'}</small>
                     </div>
                     <button className="ghost-button" type="button" onClick={handleLogout}>
@@ -263,11 +126,11 @@ function App() {
             <main className="content-grid">
                 <section className="hero panel">
                     <div className="hero-copy">
-                        <span className="hero-badge">Inventory command center</span>
-                        <h2>Manage stock, spot low items, and update products from one React workspace.</h2>
+                        <span className="hero-badge">Read-only access</span>
+                        <h2>Browse the live product catalog without edit, delete, or upload controls.</h2>
                         <p>
-                            Search the catalog, open product details, and create or edit records without bouncing
-                            between server-rendered pages.
+                            This viewer page shows the products created by the admin side of the system and keeps
+                            the experience focused on lookup and inspection.
                         </p>
                     </div>
                     <div className="stats-grid">
@@ -290,9 +153,6 @@ function App() {
                                 placeholder="Search name, SKU, or category"
                             />
                         </div>
-                        <button className="primary-button" type="button" onClick={openCreateForm}>
-                            Add Product
-                        </button>
                     </div>
 
                     {message ? <FlashMessage message={message} /> : null}
@@ -301,7 +161,7 @@ function App() {
                         <div className="section-heading">
                             <div>
                                 <p className="eyebrow">Catalog</p>
-                                <h3>Current inventory</h3>
+                                <h3>Available products</h3>
                             </div>
                             <span className="table-meta">{meta.total} items</span>
                         </div>
@@ -311,7 +171,7 @@ function App() {
                         ) : products.length === 0 ? (
                             <div className="empty-state">
                                 <strong>No products found.</strong>
-                                <span>Try a different search or add your first product.</span>
+                                <span>There are no uploaded products to display yet.</span>
                             </div>
                         ) : (
                             <div className="table-scroll">
@@ -323,7 +183,7 @@ function App() {
                                             <th>Price</th>
                                             <th>Quantity</th>
                                             <th>Date Added</th>
-                                            <th>Actions</th>
+                                            <th>Action</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -348,9 +208,9 @@ function App() {
                                                 <td>{formatDate(product.date_added)}</td>
                                                 <td>
                                                     <div className="action-row">
-                                                        <button type="button" onClick={() => handleSelectProduct(product.id)}>View</button>
-                                                        <button type="button" onClick={() => openEditForm(product)}>Edit</button>
-                                                        <button type="button" className="danger-button" onClick={() => handleDelete(product)}>Delete</button>
+                                                        <button type="button" onClick={() => handleSelectProduct(product.id)}>
+                                                            View
+                                                        </button>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -368,82 +228,20 @@ function App() {
                     <div className="section-heading">
                         <div>
                             <p className="eyebrow">Details</p>
-                            <h3>Product spotlight</h3>
+                            <h3>Product preview</h3>
                         </div>
                     </div>
 
                     {activeProduct ? (
-                        <ProductDetails product={activeProduct} currency={currency} onEdit={() => openEditForm(activeProduct)} />
+                        <ProductDetails product={activeProduct} currency={currency} />
                     ) : (
                         <div className="empty-state details-empty">
                             <strong>Select a product</strong>
-                            <span>Choose any row to view a richer summary here.</span>
+                            <span>Choose any product to view its full details here.</span>
                         </div>
                     )}
                 </aside>
             </main>
-
-            {isFormOpen ? (
-                <div className="modal-backdrop" onClick={closeForm}>
-                    <div className="modal-card" onClick={(event) => event.stopPropagation()}>
-                        <div className="modal-header">
-                            <div>
-                                <p className="eyebrow">{editingProduct ? 'Update product' : 'Create product'}</p>
-                                <h3>{editingProduct ? 'Edit inventory item' : 'Add new inventory item'}</h3>
-                            </div>
-                            <button type="button" className="ghost-button" onClick={closeForm}>Close</button>
-                        </div>
-
-                        <form className="product-form" onSubmit={handleSubmit}>
-                            <FormField label="SKU" error={formErrors.sku}>
-                                <input name="sku" value={form.sku} onChange={handleFieldChange} placeholder="PRD-001" required />
-                            </FormField>
-                            <FormField label="Product Name" error={formErrors.name}>
-                                <input name="name" value={form.name} onChange={handleFieldChange} placeholder="Wireless Mouse" required />
-                            </FormField>
-                            <FormField label="Category" error={formErrors.category}>
-                                <input name="category" value={form.category} onChange={handleFieldChange} placeholder="Accessories" />
-                            </FormField>
-                            <FormField label="Price" error={formErrors.price}>
-                                <input name="price" type="number" min="0" step="0.01" value={form.price} onChange={handleFieldChange} required />
-                            </FormField>
-                            <FormField label="Quantity" error={formErrors.quantity}>
-                                <input name="quantity" type="number" min="0" value={form.quantity} onChange={handleFieldChange} required />
-                            </FormField>
-                            <FormField label="Date Added" error={formErrors.date_added}>
-                                <input name="date_added" type="date" value={form.date_added} onChange={handleFieldChange} required />
-                            </FormField>
-                            <div className="form-field form-field-wide">
-                                <label htmlFor="image">Product Image</label>
-                                <input id="image" name="image" type="file" accept="image/*" onChange={handleFieldChange} />
-                                {formErrors.image ? <p className="field-error">{formErrors.image[0]}</p> : null}
-                                {imagePreview ? <div className="image-preview-wrap"><img src={imagePreview} alt="Preview" className="image-preview" /></div> : null}
-                                {editingProduct?.image_url ? (
-                                    <label className="checkbox-row">
-                                        <input name="remove_image" type="checkbox" checked={form.remove_image} onChange={handleFieldChange} />
-                                        Remove current image
-                                    </label>
-                                ) : null}
-                            </div>
-                            <FormField label="Description" error={formErrors.description} wide>
-                                <textarea
-                                    name="description"
-                                    rows="4"
-                                    value={form.description}
-                                    onChange={handleFieldChange}
-                                    placeholder="Short notes, supplier details, or usage info"
-                                />
-                            </FormField>
-                            <div className="modal-actions form-field-wide">
-                                <button className="primary-button" type="submit" disabled={submitting}>
-                                    {submitting ? 'Saving...' : editingProduct ? 'Update Product' : 'Save Product'}
-                                </button>
-                                <button className="ghost-button" type="button" onClick={closeForm}>Cancel</button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            ) : null}
         </div>
     );
 }
@@ -460,7 +258,7 @@ function ProductThumb({ product }) {
     return <div className="product-thumb product-thumb-fallback">{product.name.slice(0, 1).toUpperCase()}</div>;
 }
 
-function ProductDetails({ product, currency, onEdit }) {
+function ProductDetails({ product, currency }) {
     return (
         <div className="details-card">
             <ProductThumb product={product} />
@@ -477,7 +275,6 @@ function ProductDetails({ product, currency, onEdit }) {
                 <span>Description</span>
                 <p>{product.description || 'No description has been added yet.'}</p>
             </div>
-            <button className="primary-button" type="button" onClick={onEdit}>Edit Product</button>
         </div>
     );
 }
@@ -496,16 +293,6 @@ function Pagination({ currentPage, lastPage, onChange }) {
             <button type="button" onClick={() => onChange(currentPage - 1)} disabled={currentPage === 1}>Previous</button>
             <span>Page {currentPage} of {lastPage}</span>
             <button type="button" onClick={() => onChange(currentPage + 1)} disabled={currentPage === lastPage}>Next</button>
-        </div>
-    );
-}
-
-function FormField({ label, error, wide = false, children }) {
-    return (
-        <div className={`form-field${wide ? ' form-field-wide' : ''}`}>
-            <label>{label}</label>
-            {children}
-            {error ? <p className="field-error">{error[0]}</p> : null}
         </div>
     );
 }
@@ -542,4 +329,4 @@ function formatLongDate(value) {
     });
 }
 
-createRoot(document.getElementById('app')).render(<App />);
+createRoot(document.getElementById('app')).render(<ViewerApp />);
