@@ -137,6 +137,7 @@ button {
     display: grid;
     grid-template-columns: minmax(0, 2fr) minmax(280px, 0.9fr);
     gap: 24px;
+    align-items: start;
 }
 
 .inventory-column {
@@ -221,20 +222,24 @@ button {
 }
 
 .toolbar {
-    display: flex;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 18px;
     align-items: end;
+    padding: 0 18px 8px;
 }
 
 .toolbar-search {
-    flex: 1;
+    width: 100%;
+    display: grid;
+    align-content: end;
+    gap: 4px;
 }
 
 .toolbar-search label,
 .form-field label {
     display: block;
-    margin-bottom: 8px;
+    margin-bottom: 4px;
     color: var(--muted);
 }
 
@@ -242,6 +247,7 @@ button {
 .form-field input,
 .form-field textarea {
     width: 100%;
+    min-height: 52px;
     padding: 14px 16px;
     border-radius: var(--radius-sm);
     border: 1px solid var(--line);
@@ -262,6 +268,7 @@ button {
 .pagination button {
     border: 0;
     border-radius: 999px;
+    min-height: 52px;
     padding: 12px 18px;
     transition: transform 0.18s ease, opacity 0.18s ease, background 0.18s ease;
 }
@@ -515,6 +522,30 @@ button {
     box-shadow: 0 30px 90px rgba(0, 0, 0, 0.16);
 }
 
+.confirm-card {
+    width: min(460px, 100%);
+    padding: 28px;
+}
+
+.confirm-copy {
+    margin: 0 0 22px;
+    color: var(--muted);
+    line-height: 1.6;
+}
+
+.confirm-actions {
+    justify-content: flex-end;
+}
+
+.danger-button-solid {
+    background: linear-gradient(135deg, #cc5a4f, #a93d3d);
+    color: #fff8f2;
+}
+
+.danger-button-solid:hover {
+    background: linear-gradient(135deg, #d5665a, #b54848);
+}
+
 .auth-shell {
     min-height: 100vh;
     display: grid;
@@ -650,12 +681,15 @@ button {
 
     .topbar,
     .topbar-actions,
-    .toolbar,
     .modal-header,
     .modal-actions,
     .pagination {
         flex-direction: column;
         align-items: stretch;
+    }
+
+    .toolbar {
+        grid-template-columns: 1fr;
     }
 
     .stats-grid,

@@ -33,10 +33,12 @@ function App() {
     const [message, setMessage] = useState(null);
     const [activeProduct, setActiveProduct] = useState(null);
     const [isFormOpen, setIsFormOpen] = useState(false);
+    const [deleteTarget, setDeleteTarget] = useState(null);
     const [editingProduct, setEditingProduct] = useState(null);
     const [form, setForm] = useState(emptyForm);
     const [formErrors, setFormErrors] = useState({});
     const [imagePreview, setImagePreview] = useState(null);
+    const [deleting, setDeleting] = useState(false);
 
     useEffect(() => {
         const timeout = window.setTimeout(() => {
@@ -193,28 +195,45 @@ function App() {
         }
     }
 
-    async function handleDelete(product) {
-        if (!window.confirm(`Delete "${product.name}"?`)) {
+    function openDeletePrompt(product) {
+        setDeleteTarget(product);
+    }
+
+    function closeDeletePrompt() {
+        if (deleting) {
             return;
         }
 
+        setDeleteTarget(null);
+    }
+
+    async function handleDelete() {
+        if (!deleteTarget) {
+            return;
+        }
+
+        setDeleting(true);
+
         try {
-            const response = await window.axios.delete(`/api/products/${product.id}`);
+            const response = await window.axios.delete(`/api/products/${deleteTarget.id}`);
             setMessage({ type: 'success', text: response.data.message });
 
-            if (activeProduct?.id === product.id) {
+            if (activeProduct?.id === deleteTarget.id) {
                 setActiveProduct(null);
             }
 
             const shouldGoBack = products.length === 1 && page > 1;
             const nextPage = shouldGoBack ? page - 1 : page;
             setPage(nextPage);
+            setDeleteTarget(null);
             await loadProducts(nextPage, deferredSearch);
         } catch (error) {
             setMessage({
                 type: 'error',
                 text: extractErrorMessage(error, 'Unable to delete the product.'),
             });
+        } finally {
+            setDeleting(false);
         }
     }
 
@@ -350,7 +369,7 @@ function App() {
                                                     <div className="action-row">
                                                         <button type="button" onClick={() => handleSelectProduct(product.id)}>View</button>
                                                         <button type="button" onClick={() => openEditForm(product)}>Edit</button>
-                                                        <button type="button" className="danger-button" onClick={() => handleDelete(product)}>Delete</button>
+                                                        <button type="button" className="danger-button" onClick={() => openDeletePrompt(product)}>Delete</button>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -441,6 +460,30 @@ function App() {
                                 <button className="ghost-button" type="button" onClick={closeForm}>Cancel</button>
                             </div>
                         </form>
+                    </div>
+                </div>
+            ) : null}
+
+            {deleteTarget ? (
+                <div className="modal-backdrop" onClick={closeDeletePrompt}>
+                    <div className="modal-card confirm-card" onClick={(event) => event.stopPropagation()}>
+                        <div className="modal-header">
+                            <div>
+                                <p className="eyebrow">Delete product</p>
+                                <h3>Remove this item?</h3>
+                            </div>
+                        </div>
+                        <p className="confirm-copy">
+                            You are about to delete <strong>{deleteTarget.name}</strong>. This action cannot be undone.
+                        </p>
+                        <div className="modal-actions confirm-actions">
+                            <button className="ghost-button" type="button" onClick={closeDeletePrompt} disabled={deleting}>
+                                Cancel
+                            </button>
+                            <button className="primary-button danger-button-solid" type="button" onClick={handleDelete} disabled={deleting}>
+                                {deleting ? 'Deleting...' : 'Delete Product'}
+                            </button>
+                        </div>
                     </div>
                 </div>
             ) : null}

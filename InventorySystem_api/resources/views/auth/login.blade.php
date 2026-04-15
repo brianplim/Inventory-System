@@ -67,10 +67,6 @@
                 <button class="primary-button auth-submit" type="submit">Log In</button>
             </form>
 
-            <div class="auth-credentials">
-                <span><strong>Admin:</strong> admin@stocktrack.test / password123</span>
-                <span><strong>Viewer:</strong> viewer@stocktrack.test / password123</span>
-            </div>
         </section>
     </main>
 </body>

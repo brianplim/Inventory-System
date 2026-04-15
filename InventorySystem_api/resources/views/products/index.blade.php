@@ -39,27 +39,31 @@
         </div>
     </section>
 
-    <section class="glass-card p-4 mb-4">
-        <div class="row g-3 align-items-end">
-            <div class="col-lg-8">
-                <form action="{{ route('products.index') }}" method="GET" class="row g-3">
-                    <div class="col-md-9">
-                        <label class="form-label" for="search">Search Products</label>
-                        <input id="search" type="text" name="search" class="form-control" value="{{ $search }}" placeholder="Search by product name, SKU, or category">
+    <div class="row">
+        <div class="col-12 col-lg-9 col-xl-8">
+            <section class="glass-card px-4 pt-3 pb-4 mb-4">
+                <div class="row gx-3 gy-3 align-items-end">
+                    <div class="col-lg-8">
+                        <form action="{{ route('products.index') }}" method="GET" class="row gx-2 gy-2 align-items-end">
+                            <div class="col-md">
+                                <label class="form-label" for="search">Search Products</label>
+                                <input id="search" type="text" name="search" class="form-control" value="{{ $search }}" placeholder="Search by product name, SKU, or category">
+                            </div>
+                            <div class="col-md-auto d-flex align-items-end gap-2">
+                                <button type="submit" class="btn btn-dark flex-grow-1">Search</button>
+                                @if ($search !== '')
+                                    <a href="{{ route('products.index') }}" class="btn btn-outline-secondary">Clear</a>
+                                @endif
+                            </div>
+                        </form>
                     </div>
-                    <div class="col-md-3 d-flex align-items-end gap-2">
-                        <button type="submit" class="btn btn-dark flex-grow-1">Search</button>
-                        @if ($search !== '')
-                            <a href="{{ route('products.index') }}" class="btn btn-outline-secondary">Clear</a>
-                        @endif
+                    <div class="col-lg-4 text-lg-end">
+                        <a href="{{ route('products.create') }}" class="btn btn-success px-4">Add Product</a>
                     </div>
-                </form>
-            </div>
-            <div class="col-lg-4 text-lg-end">
-                <a href="{{ route('products.create') }}" class="btn btn-success px-4">Add Product</a>
-            </div>
+                </div>
+            </section>
         </div>
-    </section>
+    </div>
 
     <section class="glass-card overflow-hidden">
         <div class="table-responsive">
