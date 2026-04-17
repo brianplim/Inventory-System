@@ -3,11 +3,14 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Purchase;
 use App\Models\Product;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Validation\Rule;
 
 class ProductController extends Controller
@@ -45,6 +48,59 @@ class ProductController extends Controller
         ]);
     }
 
+    public function report(): JsonResponse
+    {
+        $products = Product::query()
+            ->orderBy('category')
+            ->orderBy('name')
+            ->get();
+
+        $serializedProducts = $products
+            ->map(fn (Product $product) => $this->serializeProduct($product))
+            ->values();
+
+        $categoryBreakdown = $products
+            ->groupBy(fn (Product $product) => $product->category ?: 'Uncategorized')
+            ->map(function ($items, $category) {
+                $units = (int) $items->sum('quantity');
+                $value = (float) $items->sum(fn (Product $product) => (float) $product->price * $product->quantity);
+
+                return [
+                    'category' => $category,
+                    'products' => $items->count(),
+                    'units' => $units,
+                    'value' => round($value, 2),
+                ];
+            })
+            ->sortByDesc('value')
+            ->values();
+
+        $lowStockItems = $products
+            ->filter(fn (Product $product) => $product->quantity < 5)
+            ->sortBy('quantity')
+            ->values()
+            ->map(fn (Product $product) => $this->serializeProduct($product))
+            ->values();
+
+        $recentProducts = $products
+            ->sortByDesc(fn (Product $product) => optional($product->date_added)?->timestamp ?? 0)
+            ->take(5)
+            ->values()
+            ->map(fn (Product $product) => $this->serializeProduct($product))
+            ->values();
+
+        return response()->json([
+            'summary' => array_merge($this->stats(), [
+                'categories' => $categoryBreakdown->count(),
+                'generatedAt' => now()->toIso8601String(),
+            ]),
+            'categoryBreakdown' => $categoryBreakdown,
+            'lowStockItems' => $lowStockItems,
+            'recentProducts' => $recentProducts,
+            'products' => $serializedProducts,
+        ]);
+    }
+
     public function store(Request $request): JsonResponse
     {
         $validated = $this->validateProduct($request);
@@ -62,6 +118,83 @@ class ProductController extends Controller
     {
         return response()->json([
             'data' => $this->serializeProduct($product),
+        ]);
+    }
+
+    public function purchase(Request $request, Product $product): JsonResponse
+    {
+        $validated = $request->validate([
+            'quantity' => ['required', 'integer', 'min:1'],
+        ]);
+
+        $purchase = DB::transaction(function () use ($request, $product, $validated) {
+            /** @var Product $lockedProduct */
+            $lockedProduct = Product::query()->lockForUpdate()->findOrFail($product->id);
+            $quantity = (int) $validated['quantity'];
+
+            if ($lockedProduct->quantity < $quantity) {
+                throw ValidationException::withMessages([
+                    'quantity' => "Only {$lockedProduct->quantity} unit(s) are currently available.",
+                ]);
+            }
+
+            $lockedProduct->decrement('quantity', $quantity);
+            $lockedProduct->refresh();
+
+            return Purchase::create([
+                'user_id' => $request->user()->id,
+                'product_id' => $lockedProduct->id,
+                'quantity' => $quantity,
+                'unit_price' => $lockedProduct->price,
+                'total_price' => (float) $lockedProduct->price * $quantity,
+                'purchased_at' => now(),
+            ]);
+        });
+
+        return response()->json([
+            'message' => 'Purchase completed successfully.',
+            'data' => [
+                'purchase' => $this->serializePurchase($purchase->fresh('product')),
+                'product' => $this->serializeProduct($purchase->product->fresh()),
+            ],
+            'stats' => $this->stats(),
+        ]);
+    }
+
+    public function purchases(Request $request): JsonResponse
+    {
+        $latestPurchase = Purchase::query()
+            ->with('product')
+            ->where('user_id', $request->user()->id)
+            ->latest('purchased_at')
+            ->first();
+
+        $purchases = Purchase::query()
+            ->with('product')
+            ->where('user_id', $request->user()->id)
+            ->latest('purchased_at')
+            ->limit(8)
+            ->get()
+            ->map(fn (Purchase $purchase) => $this->serializePurchase($purchase))
+            ->values();
+
+        return response()->json([
+            'data' => $purchases,
+            'summary' => [
+                'productsBought' => (int) Purchase::query()
+                    ->where('user_id', $request->user()->id)
+                    ->distinct('product_id')
+                    ->count('product_id'),
+                'unitsBought' => (int) Purchase::query()
+                    ->where('user_id', $request->user()->id)
+                    ->sum('quantity'),
+                'totalSpent' => (float) Purchase::query()
+                    ->where('user_id', $request->user()->id)
+                    ->sum('total_price'),
+                'lastPurchaseAt' => optional($latestPurchase?->purchased_at)?->toIso8601String(),
+                'lastPurchaseProduct' => $latestPurchase?->product?->name,
+                'lastPurchaseAmount' => (float) ($latestPurchase?->total_price ?? 0),
+            ],
         ]);
     }
 
@@ -173,6 +306,20 @@ class ProductController extends Controller
             'image_url' => $product->image_path ? URL::to($product->image_path) : null,
             'created_at' => optional($product->created_at)?->toISOString(),
             'updated_at' => optional($product->updated_at)?->toISOString(),
+        ];
+    }
+
+    protected function serializePurchase(Purchase $purchase): array
+    {
+        return [
+            'id' => $purchase->id,
+            'quantity' => $purchase->quantity,
+            'unit_price' => (float) $purchase->unit_price,
+            'total_price' => (float) $purchase->total_price,
+            'purchased_at' => optional($purchase->purchased_at)?->toISOString(),
+            'product' => $purchase->relationLoaded('product') && $purchase->product
+                ? $this->serializeProduct($purchase->product)
+                : null,
         ];
     }
 }

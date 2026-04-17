@@ -1,6 +1,6 @@
 import './bootstrap';
 import '../css/app.css';
-import React, { useEffect, useMemo, useState, useDeferredValue } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 const emptyForm = () => ({
@@ -17,6 +17,7 @@ const emptyForm = () => ({
 
 function App() {
     const authUser = window.StockTrackAuth ?? null;
+    const [view, setView] = useState('dashboard');
     const [products, setProducts] = useState([]);
     const [stats, setStats] = useState({
         totalProducts: 0,
@@ -24,6 +25,8 @@ function App() {
         totalUnits: 0,
         inventoryValue: 0,
     });
+    const [report, setReport] = useState(null);
+    const [reportLoading, setReportLoading] = useState(false);
     const [search, setSearch] = useState('');
     const deferredSearch = useDeferredValue(search);
     const [page, setPage] = useState(1);
@@ -61,6 +64,12 @@ function App() {
         return () => window.clearTimeout(timeout);
     }, [message]);
 
+    useEffect(() => {
+        if (view === 'reports' && !report && !reportLoading) {
+            void loadReport();
+        }
+    }, [view, report, reportLoading]);
+
     const currency = useMemo(
         () =>
             new Intl.NumberFormat('en-US', {
@@ -91,6 +100,22 @@ function App() {
             });
         } finally {
             setLoading(false);
+        }
+    }
+
+    async function loadReport() {
+        setReportLoading(true);
+
+        try {
+            const response = await window.axios.get('/api/products/report');
+            setReport(response.data);
+        } catch (error) {
+            setMessage({
+                type: 'error',
+                text: extractErrorMessage(error, 'Unable to generate the inventory report.'),
+            });
+        } finally {
+            setReportLoading(false);
         }
     }
 
@@ -181,6 +206,10 @@ function App() {
             closeForm();
             setActiveProduct(response.data.data ?? null);
             await loadProducts(page, deferredSearch);
+
+            if (view === 'reports' || report) {
+                await loadReport();
+            }
         } catch (error) {
             if (error.response?.status === 422) {
                 setFormErrors(error.response.data.errors ?? {});
@@ -227,6 +256,10 @@ function App() {
             setPage(nextPage);
             setDeleteTarget(null);
             await loadProducts(nextPage, deferredSearch);
+
+            if (view === 'reports' || report) {
+                await loadReport();
+            }
         } catch (error) {
             setMessage({
                 type: 'error',
@@ -257,6 +290,69 @@ function App() {
         }
     }
 
+    function handleOpenReports() {
+        setView('reports');
+        void loadReport();
+    }
+
+    function handleExportCsv() {
+        if (!report?.products?.length) {
+            setMessage({
+                type: 'error',
+                text: 'Generate the report first so there is data to export.',
+            });
+            return;
+        }
+
+        const rows = [
+            ['SKU', 'Name', 'Category', 'Price', 'Quantity', 'Inventory Value', 'Date Added', 'Status'],
+            ...report.products.map((product) => [
+                escapeCsv(product.sku),
+                escapeCsv(product.name),
+                escapeCsv(product.category || 'Uncategorized'),
+                Number(product.price).toFixed(2),
+                product.quantity,
+                (Number(product.price) * Number(product.quantity)).toFixed(2),
+                product.date_added || '',
+                product.quantity < 5 ? 'Low Stock' : 'Available',
+            ]),
+        ];
+
+        const csvContent = rows.map((row) => row.join(',')).join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `inventory-report-${new Date().toISOString().slice(0, 10)}.csv`;
+        link.click();
+        window.URL.revokeObjectURL(url);
+    }
+
+    function handlePrintReport() {
+        if (!report) {
+            setMessage({
+                type: 'error',
+                text: 'Generate the report first so there is something to print.',
+            });
+            return;
+        }
+
+        const printable = window.open('', '_blank', 'width=1100,height=800');
+
+        if (!printable) {
+            setMessage({
+                type: 'error',
+                text: 'Your browser blocked the print preview window.',
+            });
+            return;
+        }
+
+        printable.document.write(buildPrintableReport(report, currency));
+        printable.document.close();
+        printable.focus();
+        printable.print();
+    }
+
     return (
         <div className="app-shell">
             <div className="app-backdrop" />
@@ -267,7 +363,7 @@ function App() {
                 </div>
                 <div className="topbar-actions">
                     <p className="topbar-copy">
-                        Laravel now powers the API while React runs the product dashboard.
+                        Monitor products, generate inventory reports, and manage stock from one workspace.
                     </p>
                     <div className="session-chip">
                         <span>{authUser?.name ?? 'Admin User'}</span>
@@ -283,10 +379,10 @@ function App() {
                 <section className="hero panel">
                     <div className="hero-copy">
                         <span className="hero-badge">Inventory command center</span>
-                        <h2>Manage stock, spot low items, and update products from one React workspace.</h2>
+                        <h2>Track stock movement, surface risks, and turn live inventory into decision-ready reports.</h2>
                         <p>
-                            Search the catalog, open product details, and create or edit records without bouncing
-                            between server-rendered pages.
+                            Use the dashboard for daily product management, then switch to reports when you need a
+                            printable summary for audits, meetings, or operations reviews.
                         </p>
                     </div>
                     <div className="stats-grid">
@@ -298,106 +394,165 @@ function App() {
                 </section>
 
                 <section className="inventory-column">
-                    <div className="panel toolbar">
-                        <div className="toolbar-search">
-                            <label htmlFor="search">Search products</label>
-                            <input
-                                id="search"
-                                type="search"
-                                value={search}
-                                onChange={(event) => setSearch(event.target.value)}
-                                placeholder="Search name, SKU, or category"
-                            />
+                    <div className="panel workspace-toolbar">
+                        <div className="workspace-nav">
+                            <button
+                                className={`workspace-tab${view === 'dashboard' ? ' workspace-tab-active' : ''}`}
+                                type="button"
+                                onClick={() => setView('dashboard')}
+                            >
+                                Dashboard
+                            </button>
+                            <button
+                                className={`workspace-tab${view === 'reports' ? ' workspace-tab-active' : ''}`}
+                                type="button"
+                                onClick={handleOpenReports}
+                            >
+                                Reports
+                            </button>
                         </div>
-                        <button className="primary-button" type="button" onClick={openCreateForm}>
-                            Add Product
-                        </button>
+
+                        {view === 'dashboard' ? (
+                            <div className="toolbar">
+                                <div className="toolbar-search">
+                                    <label htmlFor="search">Search products</label>
+                                    <input
+                                        id="search"
+                                        type="search"
+                                        value={search}
+                                        onChange={(event) => setSearch(event.target.value)}
+                                        placeholder="Search name, SKU, or category"
+                                    />
+                                </div>
+                                <div className="toolbar-actions">
+                                    <button className="ghost-button" type="button" onClick={handleOpenReports}>
+                                        Generate Report
+                                    </button>
+                                    <button className="primary-button" type="button" onClick={openCreateForm}>
+                                        Add Product
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="report-toolbar">
+                                <div>
+                                    <p className="eyebrow">Inventory reports</p>
+                                    <h3>Business view</h3>
+                                </div>
+                                <div className="toolbar-actions">
+                                    <button className="ghost-button" type="button" onClick={() => void loadReport()} disabled={reportLoading}>
+                                        {reportLoading ? 'Refreshing...' : 'Refresh Report'}
+                                    </button>
+                                    <button className="ghost-button" type="button" onClick={handleExportCsv}>
+                                        Export CSV
+                                    </button>
+                                    <button className="primary-button" type="button" onClick={handlePrintReport}>
+                                        Print Report
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     {message ? <FlashMessage message={message} /> : null}
 
-                    <section className="panel inventory-table-wrap">
-                        <div className="section-heading">
-                            <div>
-                                <p className="eyebrow">Catalog</p>
-                                <h3>Current inventory</h3>
+                    {view === 'dashboard' ? (
+                        <section className="panel inventory-table-wrap">
+                            <div className="section-heading">
+                                <div>
+                                    <p className="eyebrow">Catalog</p>
+                                    <h3>Current inventory</h3>
+                                </div>
+                                <span className="table-meta">{meta.total} items</span>
                             </div>
-                            <span className="table-meta">{meta.total} items</span>
-                        </div>
 
-                        {loading ? (
-                            <div className="empty-state">Loading products...</div>
-                        ) : products.length === 0 ? (
-                            <div className="empty-state">
-                                <strong>No products found.</strong>
-                                <span>Try a different search or add your first product.</span>
-                            </div>
-                        ) : (
-                            <div className="table-scroll">
-                                <table className="inventory-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Product</th>
-                                            <th>Category</th>
-                                            <th>Price</th>
-                                            <th>Quantity</th>
-                                            <th>Date Added</th>
-                                            <th>Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {products.map((product) => (
-                                            <tr key={product.id} className={product.quantity < 5 ? 'is-low-stock' : ''}>
-                                                <td>
-                                                    <button
-                                                        type="button"
-                                                        className="product-cell"
-                                                        onClick={() => handleSelectProduct(product.id)}
-                                                    >
-                                                        <ProductThumb product={product} />
-                                                        <span>
-                                                            <strong>{product.name}</strong>
-                                                            <small>{product.sku}</small>
-                                                        </span>
-                                                    </button>
-                                                </td>
-                                                <td>{product.category || 'Uncategorized'}</td>
-                                                <td>{currency.format(product.price)}</td>
-                                                <td><span className="quantity-pill">{product.quantity}</span></td>
-                                                <td>{formatDate(product.date_added)}</td>
-                                                <td>
-                                                    <div className="action-row">
-                                                        <button type="button" onClick={() => handleSelectProduct(product.id)}>View</button>
-                                                        <button type="button" onClick={() => openEditForm(product)}>Edit</button>
-                                                        <button type="button" className="danger-button" onClick={() => openDeletePrompt(product)}>Delete</button>
-                                                    </div>
-                                                </td>
+                            {loading ? (
+                                <div className="empty-state">Loading products...</div>
+                            ) : products.length === 0 ? (
+                                <div className="empty-state">
+                                    <strong>No products found.</strong>
+                                    <span>Try a different search or add your first product.</span>
+                                </div>
+                            ) : (
+                                <div className="table-scroll">
+                                    <table className="inventory-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Product</th>
+                                                <th>Category</th>
+                                                <th>Price</th>
+                                                <th>Quantity</th>
+                                                <th>Date Added</th>
+                                                <th>Actions</th>
                                             </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
+                                        </thead>
+                                        <tbody>
+                                            {products.map((product) => (
+                                                <tr key={product.id} className={product.quantity < 5 ? 'is-low-stock' : ''}>
+                                                    <td>
+                                                        <button
+                                                            type="button"
+                                                            className="product-cell"
+                                                            onClick={() => handleSelectProduct(product.id)}
+                                                        >
+                                                            <ProductThumb product={product} />
+                                                            <span>
+                                                                <strong>{product.name}</strong>
+                                                                <small>{product.sku}</small>
+                                                            </span>
+                                                        </button>
+                                                    </td>
+                                                    <td>{product.category || 'Uncategorized'}</td>
+                                                    <td>{currency.format(product.price)}</td>
+                                                    <td><span className="quantity-pill">{product.quantity}</span></td>
+                                                    <td>{formatDate(product.date_added)}</td>
+                                                    <td>
+                                                        <div className="action-row">
+                                                            <button type="button" onClick={() => handleSelectProduct(product.id)}>View</button>
+                                                            <button type="button" onClick={() => openEditForm(product)}>Edit</button>
+                                                            <button type="button" className="danger-button" onClick={() => openDeletePrompt(product)}>Delete</button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
 
-                        <Pagination currentPage={meta.current_page} lastPage={meta.last_page} onChange={setPage} />
-                    </section>
+                            <Pagination currentPage={meta.current_page} lastPage={meta.last_page} onChange={setPage} />
+                        </section>
+                    ) : (
+                        <ReportsPanel
+                            report={report}
+                            loading={reportLoading}
+                            currency={currency}
+                            onInspectProduct={handleSelectProduct}
+                        />
+                    )}
                 </section>
 
                 <aside className="panel details-panel">
-                    <div className="section-heading">
-                        <div>
-                            <p className="eyebrow">Details</p>
-                            <h3>Product spotlight</h3>
-                        </div>
-                    </div>
+                    {view === 'dashboard' ? (
+                        <>
+                            <div className="section-heading">
+                                <div>
+                                    <p className="eyebrow">Details</p>
+                                    <h3>Product spotlight</h3>
+                                </div>
+                            </div>
 
-                    {activeProduct ? (
-                        <ProductDetails product={activeProduct} currency={currency} onEdit={() => openEditForm(activeProduct)} />
+                            {activeProduct ? (
+                                <ProductDetails product={activeProduct} currency={currency} onEdit={() => openEditForm(activeProduct)} />
+                            ) : (
+                                <div className="empty-state details-empty">
+                                    <strong>Select a product</strong>
+                                    <span>Choose any row to view a richer summary here.</span>
+                                </div>
+                            )}
+                        </>
                     ) : (
-                        <div className="empty-state details-empty">
-                            <strong>Select a product</strong>
-                            <span>Choose any row to view a richer summary here.</span>
-                        </div>
+                        <ReportSidebar report={report} loading={reportLoading} currency={currency} />
                     )}
                 </aside>
             </main>
@@ -487,6 +642,228 @@ function App() {
                     </div>
                 </div>
             ) : null}
+        </div>
+    );
+}
+
+function ReportsPanel({ report, loading, currency, onInspectProduct }) {
+    if (loading) {
+        return <section className="panel inventory-table-wrap"><div className="empty-state">Generating report...</div></section>;
+    }
+
+    if (!report) {
+        return (
+            <section className="panel inventory-table-wrap">
+                <div className="empty-state">
+                    <strong>No report data yet.</strong>
+                    <span>Use Generate Report to build your latest inventory summary.</span>
+                </div>
+            </section>
+        );
+    }
+
+    return (
+        <section className="report-grid">
+            <article className="panel report-summary-card">
+                <div className="section-heading">
+                    <div>
+                        <p className="eyebrow">Executive summary</p>
+                        <h3>Inventory snapshot</h3>
+                    </div>
+                    <span className="table-meta">Generated {formatDateTime(report.summary.generatedAt)}</span>
+                </div>
+                <div className="report-kpi-grid">
+                    <ReportKpi label="Total products" value={report.summary.totalProducts} />
+                    <ReportKpi label="Categories" value={report.summary.categories} />
+                    <ReportKpi label="Units on hand" value={report.summary.totalUnits} />
+                    <ReportKpi label="Inventory value" value={currency.format(report.summary.inventoryValue)} />
+                </div>
+            </article>
+
+            <article className="panel report-chart-card">
+                <div className="section-heading">
+                    <div>
+                        <p className="eyebrow">Category mix</p>
+                        <h3>Value by category</h3>
+                    </div>
+                </div>
+                <div className="category-bars">
+                    {report.categoryBreakdown.length === 0 ? (
+                        <div className="empty-state compact-empty">No categories yet.</div>
+                    ) : (
+                        report.categoryBreakdown.map((item) => (
+                            <CategoryBar key={item.category} item={item} currency={currency} maxValue={report.categoryBreakdown[0]?.value || 1} />
+                        ))
+                    )}
+                </div>
+            </article>
+
+            <article className="panel report-table-card">
+                <div className="section-heading">
+                    <div>
+                        <p className="eyebrow">Restock watch</p>
+                        <h3>Low stock items</h3>
+                    </div>
+                    <span className="table-meta">{report.lowStockItems.length} flagged</span>
+                </div>
+                {report.lowStockItems.length === 0 ? (
+                    <div className="empty-state compact-empty">
+                        <strong>Great shape.</strong>
+                        <span>No items are below the low stock threshold.</span>
+                    </div>
+                ) : (
+                    <div className="table-scroll">
+                        <table className="inventory-table report-table">
+                            <thead>
+                                <tr>
+                                    <th>Product</th>
+                                    <th>Category</th>
+                                    <th>Qty</th>
+                                    <th>Value</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {report.lowStockItems.map((product) => (
+                                    <tr key={product.id}>
+                                        <td>
+                                            <button type="button" className="product-cell" onClick={() => onInspectProduct(product.id)}>
+                                                <ProductThumb product={product} />
+                                                <span>
+                                                    <strong>{product.name}</strong>
+                                                    <small>{product.sku}</small>
+                                                </span>
+                                            </button>
+                                        </td>
+                                        <td>{product.category || 'Uncategorized'}</td>
+                                        <td><span className="quantity-pill">{product.quantity}</span></td>
+                                        <td>{currency.format(product.price * product.quantity)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </article>
+
+            <article className="panel report-table-card">
+                <div className="section-heading">
+                    <div>
+                        <p className="eyebrow">Full listing</p>
+                        <h3>Printable inventory register</h3>
+                    </div>
+                    <span className="table-meta">{report.products.length} rows</span>
+                </div>
+                <div className="table-scroll">
+                    <table className="inventory-table report-table">
+                        <thead>
+                            <tr>
+                                <th>SKU</th>
+                                <th>Name</th>
+                                <th>Category</th>
+                                <th>Price</th>
+                                <th>Qty</th>
+                                <th>Total</th>
+                                <th>Date Added</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {report.products.map((product) => (
+                                <tr key={product.id} className={product.quantity < 5 ? 'is-low-stock' : ''}>
+                                    <td>{product.sku}</td>
+                                    <td>{product.name}</td>
+                                    <td>{product.category || 'Uncategorized'}</td>
+                                    <td>{currency.format(product.price)}</td>
+                                    <td>{product.quantity}</td>
+                                    <td>{currency.format(product.price * product.quantity)}</td>
+                                    <td>{formatDate(product.date_added)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </article>
+        </section>
+    );
+}
+
+function ReportSidebar({ report, loading, currency }) {
+    if (loading) {
+        return <div className="empty-state details-empty">Preparing report insights...</div>;
+    }
+
+    if (!report) {
+        return (
+            <div className="empty-state details-empty">
+                <strong>Report preview</strong>
+                <span>Generate a report to see operational highlights here.</span>
+            </div>
+        );
+    }
+
+    const highestCategory = report.categoryBreakdown[0] ?? null;
+
+    return (
+        <div className="report-sidebar">
+            <div className="section-heading">
+                <div>
+                    <p className="eyebrow">Business view</p>
+                    <h3>Report highlights</h3>
+                </div>
+            </div>
+
+            <article className="insight-card">
+                <span>Highest value category</span>
+                <strong>{highestCategory?.category ?? 'No data yet'}</strong>
+                <p>{highestCategory ? currency.format(highestCategory.value) : 'Add products to unlock category insights.'}</p>
+            </article>
+
+            <article className="insight-card">
+                <span>Restock urgency</span>
+                <strong>{report.lowStockItems.length} items need attention</strong>
+                <p>
+                    {report.lowStockItems.length > 0
+                        ? 'These products are below the low-stock threshold and should be reviewed soon.'
+                        : 'No urgent restocks at the moment.'}
+                </p>
+            </article>
+
+            <div className="details-description">
+                <span>Recently added</span>
+                <div className="report-mini-list">
+                    {report.recentProducts.map((product) => (
+                        <div key={product.id} className="mini-row">
+                            <strong>{product.name}</strong>
+                            <small>{formatDate(product.date_added)}</small>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function ReportKpi({ label, value }) {
+    return (
+        <article className="report-kpi">
+            <span>{label}</span>
+            <strong>{value}</strong>
+        </article>
+    );
+}
+
+function CategoryBar({ item, currency, maxValue }) {
+    const width = Math.max(14, Math.round((item.value / maxValue) * 100));
+
+    return (
+        <div className="category-bar">
+            <div className="category-bar-copy">
+                <strong>{item.category}</strong>
+                <small>{item.products} products • {item.units} units</small>
+            </div>
+            <div className="category-bar-track">
+                <div className="category-bar-fill" style={{ width: `${width}%` }} />
+            </div>
+            <span>{currency.format(item.value)}</span>
         </div>
     );
 }
@@ -583,6 +960,95 @@ function formatLongDate(value) {
         day: 'numeric',
         year: 'numeric',
     });
+}
+
+function formatDateTime(value) {
+    if (!value) {
+        return '-';
+    }
+
+    return new Date(value).toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+    });
+}
+
+function escapeCsv(value) {
+    const stringValue = String(value ?? '');
+    return `"${stringValue.replaceAll('"', '""')}"`;
+}
+
+function buildPrintableReport(report, currency) {
+    const rows = report.products
+        .map(
+            (product) => `
+                <tr>
+                    <td>${escapeHtml(product.sku)}</td>
+                    <td>${escapeHtml(product.name)}</td>
+                    <td>${escapeHtml(product.category || 'Uncategorized')}</td>
+                    <td>${currency.format(product.price)}</td>
+                    <td>${product.quantity}</td>
+                    <td>${currency.format(product.price * product.quantity)}</td>
+                    <td>${escapeHtml(formatDate(product.date_added))}</td>
+                </tr>`,
+        )
+        .join('');
+
+    return `<!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>StockTrack Inventory Report</title>
+        <style>
+            body { font-family: Arial, sans-serif; color: #173328; padding: 32px; }
+            h1, h2 { margin: 0 0 12px; }
+            .meta { color: #5a6c62; margin-bottom: 24px; }
+            .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 24px 0; }
+            .card { border: 1px solid #d6ddd7; border-radius: 12px; padding: 16px; }
+            .card span { display: block; color: #5a6c62; margin-bottom: 6px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th, td { border-bottom: 1px solid #e4e8e5; padding: 10px; text-align: left; }
+            th { text-transform: uppercase; font-size: 12px; color: #5a6c62; letter-spacing: 0.08em; }
+        </style>
+    </head>
+    <body>
+        <h1>StockTrack Inventory Report</h1>
+        <p class="meta">Generated ${escapeHtml(formatDateTime(report.summary.generatedAt))}</p>
+        <div class="grid">
+            <div class="card"><span>Total products</span><strong>${report.summary.totalProducts}</strong></div>
+            <div class="card"><span>Categories</span><strong>${report.summary.categories}</strong></div>
+            <div class="card"><span>Units on hand</span><strong>${report.summary.totalUnits}</strong></div>
+            <div class="card"><span>Inventory value</span><strong>${currency.format(report.summary.inventoryValue)}</strong></div>
+        </div>
+        <h2>Inventory Register</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>SKU</th>
+                    <th>Name</th>
+                    <th>Category</th>
+                    <th>Price</th>
+                    <th>Qty</th>
+                    <th>Total</th>
+                    <th>Date Added</th>
+                </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+        </table>
+    </body>
+    </html>`;
+}
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
 }
 
 createRoot(document.getElementById('app')).render(<App />);

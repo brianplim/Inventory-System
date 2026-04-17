@@ -25,10 +25,10 @@ class DatabaseSeeder extends Seeder
         ]);
 
         User::query()->updateOrCreate([
-            'email' => 'viewer@stocktrack.test',
-        ], [
-            'name' => 'StockTrack Viewer',
             'role' => 'viewer',
+        ], [
+            'email' => 'user@stocktrack.test',
+            'name' => 'StockTrack User',
             'password' => Hash::make('password123'),
         ]);
     }

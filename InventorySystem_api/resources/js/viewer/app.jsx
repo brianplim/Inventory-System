@@ -1,9 +1,9 @@
 import '../bootstrap';
 import '../../css/app.css';
-import React, { useEffect, useMemo, useState, useDeferredValue } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
-function ViewerApp() {
+function UserApp() {
     const authUser = window.StockTrackAuth ?? null;
     const [products, setProducts] = useState([]);
     const [stats, setStats] = useState({
@@ -12,6 +12,16 @@ function ViewerApp() {
         totalUnits: 0,
         inventoryValue: 0,
     });
+    const [purchaseHistory, setPurchaseHistory] = useState([]);
+    const [purchaseSummary, setPurchaseSummary] = useState({
+        productsBought: 0,
+        unitsBought: 0,
+        totalSpent: 0,
+        lastPurchaseAt: null,
+        lastPurchaseProduct: null,
+        lastPurchaseAmount: 0,
+    });
+    const [totalSpent, setTotalSpent] = useState(0);
     const [search, setSearch] = useState('');
     const deferredSearch = useDeferredValue(search);
     const [page, setPage] = useState(1);
@@ -19,6 +29,9 @@ function ViewerApp() {
     const [loading, setLoading] = useState(true);
     const [message, setMessage] = useState(null);
     const [activeProduct, setActiveProduct] = useState(null);
+    const [purchaseTarget, setPurchaseTarget] = useState(null);
+    const [purchaseQuantity, setPurchaseQuantity] = useState(1);
+    const [purchasing, setPurchasing] = useState(false);
 
     useEffect(() => {
         const timeout = window.setTimeout(() => {
@@ -27,6 +40,10 @@ function ViewerApp() {
 
         return () => window.clearTimeout(timeout);
     }, [page, deferredSearch]);
+
+    useEffect(() => {
+        void loadPurchases();
+    }, []);
 
     useEffect(() => {
         setPage(1);
@@ -81,6 +98,24 @@ function ViewerApp() {
         }
     }
 
+    async function loadPurchases() {
+        try {
+            const response = await window.axios.get('/api/purchases');
+            setPurchaseHistory(response.data.data ?? []);
+            setPurchaseSummary({
+                productsBought: Number(response.data.summary?.productsBought ?? 0),
+                unitsBought: Number(response.data.summary?.unitsBought ?? 0),
+                totalSpent: Number(response.data.summary?.totalSpent ?? 0),
+                lastPurchaseAt: response.data.summary?.lastPurchaseAt ?? null,
+                lastPurchaseProduct: response.data.summary?.lastPurchaseProduct ?? null,
+                lastPurchaseAmount: Number(response.data.summary?.lastPurchaseAmount ?? 0),
+            });
+            setTotalSpent(Number(response.data.summary?.totalSpent ?? 0));
+        } catch {
+            // Keep user browsing available even if purchase history fails.
+        }
+    }
+
     async function handleSelectProduct(productId) {
         try {
             const response = await window.axios.get(`/api/products/${productId}`);
@@ -93,6 +128,70 @@ function ViewerApp() {
         }
     }
 
+    function openPurchaseModal(product) {
+        setPurchaseTarget(product);
+        setPurchaseQuantity(product.quantity > 0 ? 1 : 0);
+    }
+
+    function closePurchaseModal() {
+        if (purchasing) {
+            return;
+        }
+
+        setPurchaseTarget(null);
+        setPurchaseQuantity(1);
+    }
+
+    async function handlePurchase(event) {
+        event.preventDefault();
+
+        if (!purchaseTarget) {
+            return;
+        }
+
+        setPurchasing(true);
+
+        try {
+            const response = await window.axios.post(`/api/products/${purchaseTarget.id}/purchase`, {
+                quantity: purchaseQuantity,
+            });
+
+            const updatedProduct = response.data.data.product;
+            setMessage({
+                type: 'success',
+                text: `You bought ${response.data.data.purchase.quantity} unit(s) of ${updatedProduct.name}.`,
+            });
+            setStats(response.data.stats);
+            setProducts((current) =>
+                current.map((product) => (product.id === updatedProduct.id ? updatedProduct : product)),
+            );
+            setActiveProduct((current) => (current?.id === updatedProduct.id ? updatedProduct : current));
+            setPurchaseHistory((current) => {
+                const nextHistory = [response.data.data.purchase, ...current].slice(0, 8);
+                const uniqueProductIds = new Set(nextHistory.map((purchase) => purchase.product?.id).filter(Boolean));
+
+                setPurchaseSummary((currentSummary) => ({
+                    productsBought: Math.max(currentSummary.productsBought, uniqueProductIds.size),
+                    unitsBought: currentSummary.unitsBought + Number(response.data.data.purchase.quantity ?? 0),
+                    totalSpent: currentSummary.totalSpent + Number(response.data.data.purchase.total_price ?? 0),
+                }));
+
+                return nextHistory;
+            });
+            setTotalSpent((current) => current + Number(response.data.data.purchase.total_price ?? 0));
+            closePurchaseModal();
+            await loadProducts(page, deferredSearch);
+            await loadPurchases();
+        } catch (error) {
+            setMessage({
+                type: 'error',
+                text: extractPurchaseError(error),
+            });
+        } finally {
+            setPurchasing(false);
+        }
+    }
+
     async function handleLogout() {
         try {
             await window.axios.post('/logout');
@@ -101,20 +200,22 @@ function ViewerApp() {
         }
     }
 
+    const purchaseTotal = purchaseTarget ? Number(purchaseTarget.price) * Number(purchaseQuantity || 0) : 0;
+
     return (
         <div className="app-shell">
             <div className="app-backdrop" />
             <header className="topbar">
                 <div>
-                    <p className="eyebrow">Viewer Portal</p>
+                    <p className="eyebrow">User Portal</p>
                     <h1>StockTrack Product Showcase</h1>
                 </div>
                 <div className="topbar-actions">
                     <p className="topbar-copy">
-                        Read-only product browsing for staff or guests who should only view uploaded inventory.
+                        Browse products, inspect live stock, and place quick purchases from the user portal.
                     </p>
                     <div className="session-chip">
-                        <span>{authUser?.name ?? 'Viewer User'}</span>
+                        <span>{authUser?.name ?? 'User Account'}</span>
                         <small>{authUser?.email ?? 'Signed in'}</small>
                     </div>
                     <button className="ghost-button" type="button" onClick={handleLogout}>
@@ -126,18 +227,24 @@ function ViewerApp() {
             <main className="content-grid">
                 <section className="hero panel">
                     <div className="hero-copy">
-                        <span className="hero-badge">Read-only access</span>
-                        <h2>Browse the live product catalog without edit, delete, or upload controls.</h2>
+                        <span className="hero-badge">User purchase access</span>
+                        <h2>Search the catalog, inspect a product, and buy available stock without admin tools.</h2>
                         <p>
-                            This viewer page shows the products created by the admin side of the system and keeps
-                            the experience focused on lookup and inspection.
+                            Purchases automatically reduce inventory quantity, so the user side stays connected to
+                            the live stock count.
                         </p>
                     </div>
                     <div className="stats-grid">
-                        <StatCard label="Products" value={stats.totalProducts} />
-                        <StatCard label="Low Stock" value={stats.lowStockProducts} warning={stats.lowStockProducts > 0} />
-                        <StatCard label="Units" value={stats.totalUnits} />
-                        <StatCard label="Inventory Value" value={currency.format(stats.inventoryValue)} />
+                        <StatCard label="Products Bought" value={purchaseSummary.productsBought} />
+                        <StatCard
+                            label="Last Purchase"
+                            value={purchaseSummary.lastPurchaseAt ? formatStatDate(purchaseSummary.lastPurchaseAt) : 'Never'}
+                            note={purchaseSummary.lastPurchaseProduct
+                                ? `${purchaseSummary.lastPurchaseProduct} - ${currency.format(purchaseSummary.lastPurchaseAmount)}`
+                                : 'No purchases yet'}
+                        />
+                        <StatCard label="Units Bought" value={purchaseSummary.unitsBought} />
+                        <StatCard label="Money Spent" value={currency.format(totalSpent)} />
                     </div>
                 </section>
 
@@ -211,6 +318,14 @@ function ViewerApp() {
                                                         <button type="button" onClick={() => handleSelectProduct(product.id)}>
                                                             View
                                                         </button>
+                                                        <button
+                                                            type="button"
+                                                            className="primary-button viewer-buy-button"
+                                                            onClick={() => openPurchaseModal(product)}
+                                                            disabled={product.quantity < 1}
+                                                        >
+                                                            {product.quantity < 1 ? 'Out of Stock' : 'Buy'}
+                                                        </button>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -233,21 +348,93 @@ function ViewerApp() {
                     </div>
 
                     {activeProduct ? (
-                        <ProductDetails product={activeProduct} currency={currency} />
+                        <ProductDetails product={activeProduct} currency={currency} onBuy={() => openPurchaseModal(activeProduct)} />
                     ) : (
                         <div className="empty-state details-empty">
                             <strong>Select a product</strong>
                             <span>Choose any product to view its full details here.</span>
                         </div>
                     )}
+
+                    <div className="details-description viewer-history-card">
+                        <span>Recent purchases</span>
+                        {purchaseHistory.length === 0 ? (
+                            <p>You have not purchased any products yet.</p>
+                        ) : (
+                            <div className="report-mini-list">
+                                {purchaseHistory.map((purchase) => (
+                                    <div key={purchase.id} className="mini-row">
+                                        <div>
+                                            <strong>{purchase.product?.name ?? 'Product'}</strong>
+                                            <small>{purchase.quantity} unit(s)</small>
+                                        </div>
+                                        <small>{currency.format(purchase.total_price)}</small>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                 </aside>
             </main>
+
+            {purchaseTarget ? (
+                <div className="modal-backdrop" onClick={closePurchaseModal}>
+                    <div className="modal-card confirm-card" onClick={(event) => event.stopPropagation()}>
+                        <div className="modal-header">
+                            <div>
+                                <p className="eyebrow">Purchase product</p>
+                                <h3>Buy {purchaseTarget.name}</h3>
+                            </div>
+                        </div>
+
+                        <form className="purchase-form" onSubmit={handlePurchase}>
+                            <div className="detail-item">
+                                <span>Unit price</span>
+                                <strong>{currency.format(purchaseTarget.price)}</strong>
+                            </div>
+                            <div className="detail-item">
+                                <span>Available stock</span>
+                                <strong>{purchaseTarget.quantity}</strong>
+                            </div>
+                            <label className="form-field form-field-wide">
+                                <span>Quantity to buy</span>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max={purchaseTarget.quantity}
+                                    value={purchaseQuantity}
+                                    onChange={(event) => setPurchaseQuantity(event.target.value)}
+                                    required
+                                />
+                            </label>
+                            <div className="details-description form-field-wide">
+                                <span>Total</span>
+                                <p className="purchase-total">{currency.format(purchaseTotal)}</p>
+                            </div>
+                            <div className="modal-actions form-field-wide">
+                                <button className="ghost-button" type="button" onClick={closePurchaseModal} disabled={purchasing}>
+                                    Cancel
+                                </button>
+                                <button className="primary-button" type="submit" disabled={purchasing || purchaseTarget.quantity < 1}>
+                                    {purchasing ? 'Processing...' : 'Confirm Purchase'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            ) : null}
         </div>
     );
 }
 
-function StatCard({ label, value, warning = false }) {
-    return <article className={`stat-card${warning ? ' stat-card-warning' : ''}`}><span>{label}</span><strong>{value}</strong></article>;
+function StatCard({ label, value, note = null, warning = false }) {
+    return (
+        <article className={`stat-card${warning ? ' stat-card-warning' : ''}`}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+            {note ? <small>{note}</small> : null}
+        </article>
+    );
 }
 
 function ProductThumb({ product }) {
@@ -258,7 +445,7 @@ function ProductThumb({ product }) {
     return <div className="product-thumb product-thumb-fallback">{product.name.slice(0, 1).toUpperCase()}</div>;
 }
 
-function ProductDetails({ product, currency }) {
+function ProductDetails({ product, currency, onBuy }) {
     return (
         <div className="details-card">
             <ProductThumb product={product} />
@@ -269,12 +456,15 @@ function ProductDetails({ product, currency }) {
                 <DetailItem label="Price" value={currency.format(product.price)} />
                 <DetailItem label="Quantity" value={product.quantity} />
                 <DetailItem label="Date Added" value={formatLongDate(product.date_added)} />
-                <DetailItem label="Status" value={product.quantity < 5 ? 'Low Stock' : 'Available'} />
+                <DetailItem label="Status" value={product.quantity < 1 ? 'Out of Stock' : product.quantity < 5 ? 'Low Stock' : 'Available'} />
             </div>
             <div className="details-description">
                 <span>Description</span>
                 <p>{product.description || 'No description has been added yet.'}</p>
             </div>
+            <button className="primary-button" type="button" onClick={onBuy} disabled={product.quantity < 1}>
+                {product.quantity < 1 ? 'Out of Stock' : 'Buy Product'}
+            </button>
         </div>
     );
 }
@@ -305,6 +495,12 @@ function extractErrorMessage(error, fallback) {
     return error.response?.data?.message || fallback;
 }
 
+function extractPurchaseError(error) {
+    return error.response?.data?.errors?.quantity?.[0]
+        || error.response?.data?.message
+        || 'Unable to complete the purchase.';
+}
+
 function formatDate(value) {
     if (!value) {
         return '-';
@@ -329,4 +525,15 @@ function formatLongDate(value) {
     });
 }
 
-createRoot(document.getElementById('app')).render(<ViewerApp />);
+function formatStatDate(value) {
+    if (!value) {
+        return 'Never';
+    }
+
+    return new Date(value).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+    });
+}
+
+createRoot(document.getElementById('app')).render(<UserApp />);

@@ -13,7 +13,7 @@ class EnsureAdminPort
     {
         if ($request->getPort() === 8001) {
             return new JsonResponse([
-                'message' => 'This viewer server is read-only.',
+                'message' => 'This user server is read-only.',
             ], 403);
         }
 
